@@ -20,6 +20,7 @@ totalTrash = 0
 for bin_name in bins_data:
     bins_data[bin_name]['volume'] += 10
     totalTrash += bins_data[bin_name]['volume']
+
 # Define Trucks
 num_trucks = 2
 truck_capacity = 50
@@ -43,10 +44,9 @@ def calculate_distance(loc1, loc2):
 def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, incinerator_location,
                                      start_depot_location, end_depot_location, truck_speed,
                                      incinerator_unload_time, weights):
-    """
-    Calculates the fitness of a single VRP chromosome (simplified: no area overlap).
-    Lower fitness is better.
-    """
+    
+    # Calculates the fitness of a single VRP chromosome
+    
     total_distance = 0
     total_time = 0
     total_incinerator_trips = 0
@@ -58,7 +58,6 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
     unvisited_bin_penalty = 0
     invalid_bin_penalty_val = 0
 
-
     for truck_idx, truck_route in enumerate(chromosome):
         current_load = 0
         current_truck_distance = 0
@@ -69,18 +68,17 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
             continue
         
         # Ensure route starts and ends with depot_id for calculation if not already.
-        # This is a simple fix; robust generation should ensure this.
-        processed_route = list(truck_route) # Make a copy
+        
+        processed_route = list(truck_route)
         if not processed_route or processed_route[0] != depot_id:
             processed_route.insert(0, depot_id)
         if processed_route[-1] != depot_id:
             processed_route.append(depot_id)
 
-
         for i, stop_id in enumerate(processed_route):
             current_location = None
             if stop_id == depot_id:
-                if i == 0: # Start of route
+                if i == 0: #Start of route
                     current_location = start_depot_location
                 else: # End of route or intermediate depot visit
                     current_location = end_depot_location
