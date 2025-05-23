@@ -18,7 +18,7 @@ bins_data = {
 
 totalTrash = 0
 for bin_name in bins_data:
-    bins_data[bin_name]['volume'] += 0
+    bins_data[bin_name]['volume'] += 10
     totalTrash += bins_data[bin_name]['volume']
 # Define Trucks
 num_trucks = 2
@@ -357,7 +357,6 @@ for truck_route_chromosome_part in best_route_overall:
     current_load_sim = 0
     truck_serviced_any_bins = False
     
-    # Count explicit INC trips and determine final load from chromosome part
     for stop_id in truck_route_chromosome_part:
         if stop_id == incinerator_id:
             evaluated_trips_in_best_solution += 1
@@ -365,14 +364,11 @@ for truck_route_chromosome_part in best_route_overall:
         elif stop_id != depot_id and stop_id in bins_data: # It's a bin
             current_load_sim += bins_data[stop_id]['volume']
             truck_serviced_any_bins = True
-            # No depot handling needed here as we only care about load and INC for this count
 
-    # Check for mandatory final trip (simulated by fitness function)
     if truck_serviced_any_bins and current_load_sim > 0:
-        evaluated_trips_in_best_solution += 1 # This accounts for the mandatory final trip
+        evaluated_trips_in_best_solution += 1
 
 print(f"Evaluated Incinerator Trips in Best Solution (explicit + mandatory final): {evaluated_trips_in_best_solution}")
-# --- End Corrected Incinerator Trip Calculation ---
 
 # --- Plotting ---
 matplotlib.pyplot.plot(best_fitness_per_gen)
