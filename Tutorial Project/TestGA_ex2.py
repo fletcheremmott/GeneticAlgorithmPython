@@ -1,5 +1,5 @@
 import numpy
-import matplotlib.pyplot
+import matplotlib.pyplot as plt # Corrected import
 import math
 import random # Added for GA operations
 
@@ -18,8 +18,9 @@ bins_data = {
 
 totalTrash = 0
 for bin_name in bins_data:
-    bins_data[bin_name]['volume'] += 10
+    bins_data[bin_name]['volume'] += 10 # User modification
     totalTrash += bins_data[bin_name]['volume']
+
 # Define Trucks
 num_trucks = 2
 truck_capacity = 50
@@ -33,10 +34,23 @@ incinerator_unload_time = 0.5  # hours
 incinerator_id = 'INC'
 depot_id = 'depot'
 
-# --- Utility Function ---
+# --- Utility Functions ---
 def calculate_distance(loc1, loc2):
     """Calculates Euclidean distance between two locations."""
     return numpy.sqrt((loc1[0] - loc2[0])**2 + (loc1[1] - loc2[1])**2)
+
+def get_location_coords(stop_id, bins_data_dict, depot_loc, incinerator_loc_coords, 
+                        depot_id_str, incinerator_id_str):
+    """Returns the (x, y) coordinates for a given stop ID."""
+    if stop_id == depot_id_str:
+        return depot_loc
+    elif stop_id == incinerator_id_str:
+        return incinerator_loc_coords
+    elif stop_id in bins_data_dict:
+        return bins_data_dict[stop_id]['loc']
+    else:
+        print(f"Warning: Location for stop_id '{stop_id}' not found in get_location_coords.")
+        return None 
 
 # --- Core GA Functions for VRP ---
 
@@ -44,13 +58,13 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
                                      start_depot_location, end_depot_location, truck_speed,
                                      incinerator_unload_time, weights):
     """
-    Calculates the fitness of a single VRP chromosome (simplified: no area overlap).
-    Lower fitness is better.
-    MODIFIED: Enforces a final incinerator trip if a truck has collected bins and has a load.
+    Calculates the fitness of a single VRP chromosome.
+    This version reflects the user's provided script without the mandatory final incinerator trip logic
+    within this function itself (that was a previous discussion point).
     """
     total_distance = 0
     total_time = 0
-    total_incinerator_trips = 0 # This will be summed across all trucks
+    total_incinerator_trips = 0
 
     all_bins_in_problem = set(bins_data.keys())
     visited_bins_in_chromosome = set()
@@ -59,13 +73,11 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
     unvisited_bin_penalty = 0
     invalid_bin_penalty_val = 0
 
-
     for truck_idx, truck_route in enumerate(chromosome):
         current_load = 0
         current_truck_distance = 0
         current_truck_time = 0
         last_location = start_depot_location
-        has_collected_any_bins_this_truck = False # Flag for the new requirement
 
         if not truck_route or truck_route == [depot_id, depot_id] or truck_route == [depot_id]:
             continue
@@ -76,42 +88,26 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
         if processed_route[-1] != depot_id:
             processed_route.append(depot_id)
 
-        # Store the location before the potential final incinerator trip detour
-        location_before_final_depot_leg = last_location 
-
         for i, stop_id in enumerate(processed_route):
             current_location = None
-            is_final_depot_stop = (stop_id == depot_id and i == len(processed_route) - 1)
-
             if stop_id == depot_id:
                 if i == 0: 
                     current_location = start_depot_location
                 else: 
                     current_location = end_depot_location
-                
-                # If this is the final depot stop, store the location of the stop *before* it
-                if is_final_depot_stop:
-                    # 'last_location' at this point is the stop before the final depot in the original route
-                    location_before_final_depot_leg = last_location
-
             elif stop_id == incinerator_id:
                 current_location = incinerator_location
-                # This is an explicit incinerator trip within the route
                 total_incinerator_trips += 1
                 current_truck_time += incinerator_unload_time
                 current_load = 0 
-            else:  # It's a bin
+            else: 
                 if stop_id not in bins_data:
                     invalid_bin_penalty_val += weights.get('invalid_bin', 100000)
-                    # To prevent errors, if bin is invalid, we can't determine its location.
-                    # We might skip adding distance for this leg or handle it as appropriate.
-                    # For now, let current_location remain None, loop will use last_location for next valid stop.
-                    continue 
+                    continue
 
                 bin_info = bins_data[stop_id]
                 current_location = bin_info['loc']
                 visited_bins_in_chromosome.add(stop_id)
-                has_collected_any_bins_this_truck = True # Mark that this truck serviced bins
 
                 if current_load + bin_info['volume'] > truck_capacity:
                     capacity_violation_penalty += weights.get('capacity_violation', 10000) * \
@@ -120,48 +116,13 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
                 current_load += bin_info['volume']
                 current_truck_time += bin_info['service_time']
 
-            # Calculate travel to the current_stop (or to the final depot if it's the last iteration)
             if current_location is not None:
-                # Special handling for the mandatory final incinerator trip is done *after* this loop
-                # This section calculates the route as defined in processed_route
-                if not (is_final_depot_stop and current_load > 0 and has_collected_any_bins_this_truck) :
-                    dist = calculate_distance(last_location, current_location)
-                    current_truck_distance += dist
-                    current_truck_time += dist / truck_speed if truck_speed > 0 else float('inf')
-                
+                dist = calculate_distance(last_location, current_location)
+                current_truck_distance += dist
+                current_truck_time += dist / truck_speed if truck_speed > 0 else float('inf')
                 last_location = current_location
-            elif i > 0: 
+            elif i > 0:
                 pass
-        
-        # --- Start: New logic for mandatory final incinerator trip ---
-        if has_collected_any_bins_this_truck and current_load > 0:
-            # Truck has collected bins, has a load, and is at its "last service location"
-            # (which is 'location_before_final_depot_leg' before going to the final depot)
-            # It must go to the incinerator, then to the depot.
-
-            # 1. Cost from last service location to incinerator
-            dist_to_inc = calculate_distance(location_before_final_depot_leg, incinerator_location)
-            time_to_inc = dist_to_inc / truck_speed if truck_speed > 0 else float('inf')
-            
-            current_truck_distance += dist_to_inc
-            current_truck_time += time_to_inc
-            current_truck_time += incinerator_unload_time # Time at incinerator
-            total_incinerator_trips += 1 # Count this mandatory trip
-            # current_load = 0; // Load becomes 0, not strictly needed for calculation beyond this point for this truck
-
-            # 2. Cost from incinerator to end_depot_location
-            dist_inc_to_depot = calculate_distance(incinerator_location, end_depot_location)
-            time_inc_to_depot = dist_inc_to_depot / truck_speed if truck_speed > 0 else float('inf')
-            
-            current_truck_distance += dist_inc_to_depot
-            current_truck_time += time_inc_to_depot
-        else:
-            # No mandatory final incinerator trip needed, or truck is empty.
-            # Add the standard travel from its last service location to the end depot.
-            dist_to_final_depot = calculate_distance(location_before_final_depot_leg, end_depot_location)
-            current_truck_distance += dist_to_final_depot
-            current_truck_time += dist_to_final_depot / truck_speed if truck_speed > 0 else float('inf')
-        # --- End: New logic for mandatory final incinerator trip ---
 
         total_distance += current_truck_distance
         total_time += current_truck_time
@@ -172,7 +133,7 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
 
     fitness = (total_distance * weights.get('distance', 1.0) +
                total_time * weights.get('time', 1.0) +
-               total_incinerator_trips * weights.get('incinerator_trips', 0.1) + # Note: using 0.1 as in original example, though prompt had 10.0
+               total_incinerator_trips * weights.get('incinerator_trips', 0.1) + # User's script has 0.1 here
                unvisited_bin_penalty +
                capacity_violation_penalty +
                invalid_bin_penalty_val)
@@ -180,46 +141,32 @@ def calculate_fitness_vrp_simplified(chromosome, bins_data, truck_capacity, inci
 
 
 def create_initial_vrp_population(sol_per_pop, bins_data_keys, num_trucks, depot_id, incinerator_id):
-    """
-    Creates an initial population for the VRP.
-    VERY BASIC AND LIKELY INEFFICIENT/INVALID INITIALIZATION.
-    This needs significant improvement for real VRPs.
-    """
     population = []
     all_bin_ids = list(bins_data_keys)
-
     for _ in range(sol_per_pop):
         chromosome = []
-        shuffled_bins = list(all_bin_ids) # Make a mutable copy
+        shuffled_bins = list(all_bin_ids)
         random.shuffle(shuffled_bins)
-
-        # Distribute bins somewhat evenly (very naive)
         bins_per_truck_approx = len(shuffled_bins) // num_trucks if num_trucks > 0 else len(shuffled_bins)
-
         for i in range(num_trucks):
             route = [depot_id]
             truck_bins = []
             if num_trucks > 0 :
                 start_idx = i * bins_per_truck_approx
-                if i == num_trucks - 1: # Last truck takes all remaining
+                if i == num_trucks - 1:
                     truck_bins = shuffled_bins[start_idx:]
                 else:
                     truck_bins = shuffled_bins[start_idx : start_idx + bins_per_truck_approx]
-            
-            # Simple strategy: add bins, if capacity might be an issue, add INC (very naive)
             current_cap_sim = 0
             for bin_id in truck_bins:
                 route.append(bin_id)
-                # Ensure bins_data is accessible here if needed for volume, or pass it
-                # For this placeholder, we assume bins_data is globally accessible or not strictly needed for this naive logic
-                if bin_id in bins_data: # Check if bin_id is valid before accessing
+                if bin_id in bins_data: # Check if bin_id is valid
                     current_cap_sim += bins_data[bin_id]['volume']
-                    if current_cap_sim > truck_capacity * 0.7 and random.random() < 0.3: # Arbitrary incinerator add
+                    if current_cap_sim > truck_capacity * 0.7 and random.random() < 0.3:
                         route.append(incinerator_id)
                         current_cap_sim = 0
             route.append(depot_id)
             chromosome.append(route)
-        
         population.append(chromosome)
     return population
 
@@ -237,9 +184,7 @@ def calculate_fitness_for_population(population, bins_data, truck_capacity, inci
 
 
 def select_mating_pool_vrp(population, fitness, num_parents):
-    """Selects the best individuals in the current generation as parents for producing the next generation."""
     parents = []
-    # Sort by fitness (lower is better because we minimize)
     sorted_indices = numpy.argsort(fitness)
     for i in range(num_parents):
         parents.append(population[sorted_indices[i]])
@@ -247,79 +192,121 @@ def select_mating_pool_vrp(population, fitness, num_parents):
 
 
 def crossover_vrp(parents, offspring_size_tuple, bins_data_keys, depot_id, incinerator_id):
-    """
-    Performs crossover on parents to create offspring.
-    VERY BASIC PLACEHOLDER - Often produces invalid or poor solutions.
-    Needs a proper VRP crossover operator (e.g., Order Crossover, Route-based Crossover, PMX).
-    """
     offspring = []
     num_offspring_needed = offspring_size_tuple[0]
-    
     if not parents: return []
-
     for k in range(num_offspring_needed):
         parent1 = random.choice(parents)
         parent2 = random.choice(parents)
-        
-        num_routes = len(parent1) # Assuming consistent number of trucks/routes
-        child = [[] for _ in range(num_routes)] # Initialize child structure
-
-        # Ensure parent1 and parent2 have the same structure if num_routes is critical
-        # This basic crossover might fail if parents have different numbers of routes.
-        if num_routes > 0 and len(parent2) == num_routes:
+        num_routes = len(parent1)
+        child = [[] for _ in range(num_routes)]
+        if num_routes > 0 and len(parent2) == num_routes : # Basic check
             crossover_point = random.randint(1, num_routes -1) if num_routes > 1 else 1
-            child[:crossover_point] = [list(r) for r in parent1[:crossover_point]] 
-            child[crossover_point:] = [list(r) for r in parent2[crossover_point:]] 
-        else: # Fallback if structures differ or empty
-            child = [list(r) for r in parent1] # Just copy parent1
-
+            child[:crossover_point] = [list(r) for r in parent1[:crossover_point]]
+            child[crossover_point:] = [list(r) for r in parent2[crossover_point:]]
+        else: # Fallback if parent structures differ
+             child = [list(r) for r in parent1] # Just copy parent1
         offspring.append(child)
     return offspring
 
 
 def mutation_vrp(offspring_crossover, mutation_rate, bins_data_keys, depot_id, incinerator_id):
-    """
-    Performs mutation on offspring.
-    VERY BASIC PLACEHOLDER. Needs proper VRP mutation operators (swap, insert, invert).
-    """
     mutated_offspring = []
-    # all_bin_ids = list(bins_data_keys) # Not used in this simple mutation
-
     for chromosome in offspring_crossover:
-        mutated_chromosome = [list(route) for route in chromosome] 
-
+        mutated_chromosome = [list(route) for route in chromosome]
         if random.random() < mutation_rate:
             if not mutated_chromosome: continue
-            
             truck_idx_to_mutate = random.randrange(len(mutated_chromosome))
             route_to_mutate = mutated_chromosome[truck_idx_to_mutate]
-            
             bin_indices_in_route = [i for i, stop in enumerate(route_to_mutate) 
                                     if stop != depot_id and stop != incinerator_id]
-
             if len(bin_indices_in_route) >= 2:
                 idx1_map, idx2_map = random.sample(bin_indices_in_route, 2)
                 route_to_mutate[idx1_map], route_to_mutate[idx2_map] = route_to_mutate[idx2_map], route_to_mutate[idx1_map]
-        
         mutated_offspring.append(mutated_chromosome)
     return mutated_offspring
 
-# --- GA Parameters ---
-sol_per_pop = 30
-num_parents_mating = 10 
-num_generations = 500 # User increased this
-mutation_rate = 0.2
+# --- Plotting Function for Routes ---
+def plot_truck_routes(solution_chromosome, bins_data_dict, depot_loc, incinerator_loc_coords, 
+                      depot_id_str, incinerator_id_str, fig_num=1):
+    """Plots the truck routes from a solution chromosome."""
+    plt.figure(fig_num, figsize=(12, 10))
+    plt.clf() 
 
-# Fitness weights
-# Note: The original prompt's example code used 'incinerator_trips': 10.0, while the previous Python template had 0.1.
-# I'll stick to what's in the provided script for this modification.
+    # Plot Depot
+    plt.plot(depot_loc[0], depot_loc[1], 'ks', markersize=10, label='Depot')
+    plt.text(depot_loc[0], depot_loc[1] + 0.2, 'Depot', ha='center', va='bottom', fontsize=9)
+
+    # Plot Incinerator
+    plt.plot(incinerator_loc_coords[0], incinerator_loc_coords[1], 'm^', markersize=10, label='Incinerator')
+    plt.text(incinerator_loc_coords[0], incinerator_loc_coords[1] + 0.2, 'Incinerator', ha='center', va='bottom', fontsize=9)
+
+    # Plot Bins
+    bin_label_added = False
+    for bin_id, data in bins_data_dict.items():
+        loc = data['loc']
+        if not bin_label_added:
+            plt.plot(loc[0], loc[1], 'bo', markersize=7, label='Bin')
+            bin_label_added = True
+        else:
+            plt.plot(loc[0], loc[1], 'bo', markersize=7)
+        plt.text(loc[0], loc[1] + 0.2, bin_id, ha='center', va='bottom', fontsize=8)
+
+    route_colors = ['r', 'g', 'c', 'y', 'orange', 'purple', 'brown', 'pink'] # More colors
+
+    for truck_idx, route in enumerate(solution_chromosome):
+        if not route:
+            continue
+
+        current_path_segment_coords = []
+        for stop_id in route: # The route from chromosome should already be complete
+            coords = get_location_coords(stop_id, bins_data_dict, depot_loc, 
+                                         incinerator_loc_coords, depot_id_str, incinerator_id_str)
+            if coords:
+                current_path_segment_coords.append(coords)
+            
+        if not current_path_segment_coords:
+            continue
+
+        path_x, path_y = zip(*current_path_segment_coords)
+        
+        color = route_colors[truck_idx % len(route_colors)]
+        plt.plot(path_x, path_y, linestyle='-', color=color, marker='.', 
+                 label=f'Truck {truck_idx+1} Route', alpha=0.8, linewidth=1.5)
+        
+        for i in range(len(path_x) - 1):
+            plt.arrow(path_x[i], path_y[i], 
+                      (path_x[i+1] - path_x[i]) * 0.95, # Shorten arrow slightly to not overlap marker
+                      (path_y[i+1] - path_y[i]) * 0.95,
+                      color=color, shape='full', lw=0, 
+                      length_includes_head=True, head_width=0.15, alpha=0.6)
+
+    plt.xlabel("X-coordinate")
+    plt.ylabel("Y-coordinate")
+    plt.title("Truck Routes for Best Solution (Explicit Chromosome Path)")
+    
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1,1)) # Legend outside
+    
+    plt.grid(True)
+    plt.axis('equal')
+    plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout to make space for legend
+
+
+# --- GA Parameters ---
+sol_per_pop = 50
+num_parents_mating = 16
+num_generations = 50
+mutation_rate = 0.25
+
 fitness_weights_simplified = {
     'distance': 1.0,
     'time': 0.5,
-    'unvisited': 100000, 
-    'incinerator_trips': 10.0, # As in user's latest script's output section example
+    'unvisited': 100000,
+    'incinerator_trips': 10.0, # User's script example output used 10.0 for this weight in analysis
     'capacity_violation': 50000,
-    'invalid_bin': 200000 
+    'invalid_bin': 200000
 }
 
 # --- Main GA Loop ---
@@ -336,22 +323,18 @@ best_fitness_per_gen = []
 
 for generation in range(num_generations):
     print(f"\n--- Generation : {generation} ---")
-
     fitness = calculate_fitness_for_population(
         new_population, bins_data, truck_capacity,
         incinerator_location, start_depot_location,
         end_depot_location, truck_speed,
         incinerator_unload_time, fitness_weights_simplified
     )
-
     current_best_fitness = numpy.min(fitness)
     best_fitness_per_gen.append(current_best_fitness)
     print(f"Best fitness in generation {generation}: {current_best_fitness:.2f}")
 
     parents = select_mating_pool_vrp(new_population, fitness, num_parents_mating)
-
     offspring_crossover = crossover_vrp(parents, (sol_per_pop - len(parents),), bin_ids_list, depot_id, incinerator_id)
-
     offspring_mutation = mutation_vrp(offspring_crossover, mutation_rate, bin_ids_list, depot_id, incinerator_id)
     
     new_population[:len(parents)] = parents 
@@ -360,13 +343,13 @@ for generation in range(num_generations):
     if len(new_population) != sol_per_pop:
         print(f"Warning: Population size changed to {len(new_population)}, expected {sol_per_pop}")
         if len(new_population) < sol_per_pop:
-            while len(new_population) < sol_per_pop: new_population.append(new_population[-1]) 
+            while len(new_population) < sol_per_pop: new_population.append(new_population[-1])
         else:
             new_population = new_population[:sol_per_pop]
 
-# --- Results --- (Ensure this section starts after the GA loop)
+# --- Results ---
 print("\n--- GA Finished ---")
-final_fitness_scores = calculate_fitness_for_population( # Renamed to avoid conflict
+final_fitness_scores = calculate_fitness_for_population(
     new_population, bins_data, truck_capacity,
     incinerator_location, start_depot_location,
     end_depot_location, truck_speed,
@@ -375,45 +358,52 @@ final_fitness_scores = calculate_fitness_for_population( # Renamed to avoid conf
 best_match_idx = numpy.argmin(final_fitness_scores)
 
 print("\nBest solution chromosome found: ")
-best_route_overall = new_population[best_match_idx] # Get the best chromosome
+best_route_overall = new_population[best_match_idx]
 for i, route_part in enumerate(best_route_overall):
     print(f"  Truck {i+1}: {route_part}")
 print("Best solution fitness: ", final_fitness_scores[best_match_idx])
 
-# --- Corrected Incinerator Trip Calculation for Display ---
+# --- Incinerator Trip Analysis for Best Solution ---
+# This analysis reflects the user's script which may differ from fitness function's internal costing
+# if the fitness function had additional implicit trip logic (which this version doesn't).
 print("\n--- Incinerator Trip Analysis for Best Solution ---")
 minIncineratorTrips_theoretical = math.ceil(totalTrash / truck_capacity)
 print(f"Total Trash: {totalTrash}")
 print(f"Truck Capacity (per truck): {truck_capacity}")
 print(f"Theoretical Minimum Incinerator Trips (overall): {minIncineratorTrips_theoretical}")
 
-# Calculate trips for display, mirroring fitness function logic
 evaluated_trips_in_best_solution = 0
 for truck_route_chromosome_part in best_route_overall:
     current_load_sim = 0
     truck_serviced_any_bins = False
-    
-    # Count explicit INC trips and determine final load from chromosome part
-    for stop_id in truck_route_chromosome_part:
-        if stop_id == incinerator_id:
+    for stop_id_analysis in truck_route_chromosome_part: # Renamed to avoid conflict
+        if stop_id_analysis == incinerator_id:
             evaluated_trips_in_best_solution += 1
             current_load_sim = 0
-        elif stop_id != depot_id and stop_id in bins_data: # It's a bin
-            current_load_sim += bins_data[stop_id]['volume']
+        elif stop_id_analysis != depot_id and stop_id_analysis in bins_data:
+            current_load_sim += bins_data[stop_id_analysis]['volume']
             truck_serviced_any_bins = True
-            # No depot handling needed here as we only care about load and INC for this count
-
-    # Check for mandatory final trip (simulated by fitness function)
+    # The user's output example implies a check for mandatory final trip here for display.
+    # The current fitness function in *this* script doesn't add this cost,
+    # but the user's example output did have 4 trips.
+    # I'll keep the display logic consistent with their example output's implication.
     if truck_serviced_any_bins and current_load_sim > 0:
-        evaluated_trips_in_best_solution += 1 # This accounts for the mandatory final trip
+        evaluated_trips_in_best_solution += 1 
+print(f"Evaluated Incinerator Trips in Best Solution (explicit + display-simulated final): {evaluated_trips_in_best_solution}")
 
-print(f"Evaluated Incinerator Trips in Best Solution (explicit + mandatory final): {evaluated_trips_in_best_solution}")
-# --- End Corrected Incinerator Trip Calculation ---
+# --- Plotting Fitness ---
+plt.figure(1, figsize=(10, 6)) # Explicitly use figure 1
+plt.plot(best_fitness_per_gen)
+plt.xlabel("Generation")
+plt.ylabel("Best Fitness (Lower is Better)")
+plt.title("VRP Fitness Improvement Over Generations")
+plt.grid(True)
 
-# --- Plotting ---
-matplotlib.pyplot.plot(best_fitness_per_gen)
-matplotlib.pyplot.xlabel("Generation")
-matplotlib.pyplot.ylabel("Best Fitness (Lower is Better)")
-matplotlib.pyplot.title("VRP Fitness Improvement Over Generations (Simplified)")
-matplotlib.pyplot.grid(True)
-matplotlib.pyplot.show()
+# --- Plotting Truck Routes ---
+# Ensure matplotlib.pyplot is imported as plt if not already done at the top
+# import matplotlib.pyplot as plt # Already imported at the top
+
+plot_truck_routes(best_route_overall, bins_data, start_depot_location, 
+                  incinerator_location, depot_id, incinerator_id, fig_num=2) # Use figure 2
+
+plt.show() # Show all plots
